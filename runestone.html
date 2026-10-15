@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Runestone Maker</title>
+<style>
+  *{box-sizing:border-box}
+  html,body{margin:0;width:800px;height:450px;overflow:hidden;background:#14110e;font-family:Georgia,'Times New Roman',serif;color:#f1e6cf}
+  #app{display:flex;align-items:center;justify-content:center;gap:10px;width:800px;height:450px;background:radial-gradient(circle at 25% 20%,#2c241b,#14110e 70%)}
+  #panel{width:340px;padding:0 6px 0 14px}
+  h1{margin:0 0 2px;font-size:20px;letter-spacing:1px;color:#e8b86a;text-shadow:0 2px 0 #000}
+  .sub{margin:0 0 10px;font-size:12px;color:#cdbf9f}
+  label{font-size:12px;color:#cdbf9f;display:block;margin-bottom:3px}
+  input[type=text]{width:100%;padding:9px 10px;font:16px Georgia,serif;border:2px solid #6b5535;border-radius:6px;background:#241d15;color:#fff}
+  input[type=text]:focus{outline:none;border-color:#e8b86a}
+  .row{margin:10px 0 0}
+  button{cursor:pointer;font:bold 14px Georgia,serif;padding:9px 14px;border-radius:6px;border:0;background:#c0392b;color:#fff;box-shadow:0 3px 0 #7d241b}
+  button:active{transform:translateY(2px);box-shadow:0 1px 0 #7d241b}
+    #key{display:block;margin-top:12px;width:312px;height:118px;background:#1d1812;border:1px solid #4a3b28;border-radius:6px}
+  .tip{font-size:11px;color:#a89a7c;margin:6px 0 0}
+  #stage{width:370px;height:353px}
+  canvas#stone{width:370px;height:353px;display:block;border-radius:8px;box-shadow:0 6px 18px #000a}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="panel">
+    <h1>ᚱᚢᚾᛅ&nbsp;Runestone Maker</h1>
+    <p class="sub">Carve a message to your teacher in Viking runes!</p>
+    <label for="msg">Type your message (max 30 letters)</label>
+    <input id="msg" type="text" maxlength="30" value="Hello teacher" autocomplete="off" spellcheck="false">
+    <div class="row">
+      <button id="dl">⬇ Download my runestone</button>
+    </div>
+    <canvas id="key" width="624" height="236"></canvas>
+    <p class="tip">Only 16 runes: letters that sound alike share one.</p>
+  </div>
+  <div id="stage"><canvas id="stone" width="880" height="840"></canvas></div>
+</div>
+
+<script>
+// Younger Futhark (Viking Age, long-branch) drawn as strokes in a 0-1 box (x across, y down)
+const G = {
+  f:[[[.35,0],[.35,1]],[[.35,.35],[.8,.05]],[[.35,.65],[.8,.35]]],
+  u:[[[.25,0],[.25,1]],[[.25,0],[.75,.4],[.75,1]]],
+  th:[[[.3,0],[.3,1]],[[.3,.2],[.75,.5],[.3,.8]]],
+  o:[[[.3,0],[.3,1]],[[.3,.1],[.75,.4]],[[.3,.4],[.75,.7]]],
+  r:[[[.3,0],[.3,1]],[[.3,0],[.75,.25],[.3,.5]],[[.3,.5],[.75,1]]],
+  k:[[[.35,0],[.35,1]],[[.35,.3],[.8,.65]]],
+  h:[[[.2,0],[.2,1]],[[.8,0],[.8,1]],[[.2,.65],[.8,.35]]],
+  n:[[[.5,0],[.5,1]],[[.2,.3],[.8,.7]]],
+  i:[[[.5,0],[.5,1]]],
+  a:[[[.65,0],[.65,1]],[[.65,.1],[.2,.5]]],
+  s:[[[.7,0],[.3,.33],[.7,.66],[.3,1]]],
+  t:[[[.5,0],[.5,1]],[[.2,.35],[.5,0],[.8,.35]]],
+  b:[[[.3,0],[.3,1]],[[.3,0],[.7,.25],[.3,.5],[.7,.75],[.3,1]]],
+  m:[[[.5,0],[.5,1]],[[.15,0],[.5,.4],[.85,0]],[[.15,.45],[.5,.85],[.85,.45]]],
+  l:[[[.35,0],[.35,1]],[[.35,.35],[.8,0]]]
+};
+const KEY = [['f','f'],['u','u v w'],['th','th'],['o','o'],['r','r'],['k','k g c q'],['h','h'],['n','n'],
+             ['i','i e y j'],['a','a'],['s','s z'],['t','t d'],['b','b p'],['m','m'],['l','l'],['','']];
+const MAP = {a:'a',b:'b',c:'k',d:'t',e:'i',f:'f',g:'k',h:'h',i:'i',j:'i',k:'k',l:'l',m:'m',n:'n',o:'o',p:'b',
+             q:'k',r:'r',s:'s',t:'t',u:'u',v:'u',w:'u',x:'ks',y:'i',z:'s'};
+
+function toRunes(text){
+  const words = text.toLowerCase().replace(/[^a-z\s-]/g,' ').split(/[\s-]+/).filter(Boolean);
+  return words.map(w=>{
+    w = w.replace(/c(?=[eiy])/g,'s').replace(/ph/g,'f').replace(/ck/g,'k').replace(/th/g,'#');
+    const out=[];
+    for(const ch of w){
+      const seq = ch==='#' ? ['th'] : (MAP[ch]||'').length===2 ? (MAP[ch]).split('') : [MAP[ch]];
+      for(const r of seq){ if(r && out[out.length-1]!==r) out.push(r); } // Viking carvers wrote double letters once
+    }
+    return out;
+  }).filter(w=>w.length);
+}
+
+function rng(seed){return()=>{seed=(seed*16807)%2147483647;return(seed-1)/2147483646}}
+
+function carve(ctx,path,lw,paint){
+  const passes=[{c:'rgba(255,255,255,.35)',w:lw+1.5,dx:1,dy:1.3},{c:'#241f1a',w:lw+1,dx:0,dy:0},{c:paint?'#b3261e':'#4a4238',w:lw*.55,dx:0,dy:0}];
+  ctx.lineCap='round';ctx.lineJoin='round';
+  for(const p of passes){ctx.save();ctx.translate(p.dx,p.dy);ctx.strokeStyle=p.c;ctx.lineWidth=p.w;ctx.stroke(path);ctx.restore();}
+}
+
+function addRune(path,key,x,y,w,h){
+  for(const line of G[key]){
+    line.forEach((p,i)=>{const X=x+p[0]*w,Y=y+p[1]*h;i?path.lineTo(X,Y):path.moveTo(X,Y);});
+  }
+}
+
+const cv=document.getElementById('stone'),ctx=cv.getContext('2d');
+function render(){
+  const text=document.getElementById('msg').value.trim();
+  const paint=false;
+  ctx.setTransform(2,0,0,2,0,0);
+  const R=rng(42);
+  // sky
+  let g=ctx.createLinearGradient(0,0,0,420);
+  g.addColorStop(0,'#16213f');g.addColorStop(.55,'#5b3a63');g.addColorStop(.85,'#e58b58');g.addColorStop(1,'#f3b573');
+  ctx.fillStyle=g;ctx.fillRect(0,0,440,420);
+  ctx.fillStyle='rgba(255,255,255,.8)';
+  for(let i=0;i<45;i++){ctx.fillRect(R()*440,R()*190,1.3,1.3);}
+  ctx.fillStyle='#fbe3a4';ctx.beginPath();ctx.arc(370,70,15,0,7);ctx.fill();
+  ctx.fillStyle='rgba(30,26,48,.85)';ctx.beginPath();ctx.moveTo(0,330);
+  [[60,270],[120,320],[190,250],[260,318],[330,262],[400,310],[440,280]].forEach(p=>ctx.lineTo(...p));
+  ctx.lineTo(440,420);ctx.lineTo(0,420);ctx.fill();
+
+  // stone
+  const stone=new Path2D();
+  stone.moveTo(58,376);stone.lineTo(48,150);stone.bezierCurveTo(46,60,130,14,222,16);
+  stone.bezierCurveTo(320,16,396,70,392,160);stone.lineTo(384,376);stone.closePath();
+  ctx.save();ctx.shadowColor='rgba(0,0,0,.5)';ctx.shadowBlur=18;ctx.shadowOffsetX=6;ctx.fillStyle='#777';ctx.fill(stone);ctx.restore();
+  g=ctx.createLinearGradient(50,0,390,0);
+  g.addColorStop(0,'#8e8a82');g.addColorStop(.5,'#a09b92');g.addColorStop(1,'#6a665f');
+  ctx.save();ctx.clip(stone);ctx.fillStyle=g;ctx.fillRect(0,0,440,420);
+  for(let i=0;i<1100;i++){const v=R();ctx.fillStyle=v<.5?'rgba(0,0,0,.13)':'rgba(255,255,255,.14)';ctx.fillRect(40+R()*360,10+R()*370,1+R()*1.6,1+R()*1.6);}
+  for(let i=0;i<260;i++){ctx.fillStyle='rgba(88,120,60,.35)';ctx.fillRect(50+R()*340,300+R()*80,2,2);}
+  ctx.strokeStyle='rgba(0,0,0,.28)';ctx.lineWidth=16;ctx.stroke(stone);
+  ctx.strokeStyle='rgba(30,25,20,.45)';ctx.lineWidth=1.2;
+  [[300,340,[[0,0],[-10,18],[6,34],[-6,52]]],[110,30,[[0,0],[8,14],[-4,28]]]].forEach(([x,y,pts])=>{ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(x+p[0],y+p[1]):ctx.moveTo(x+p[0],y+p[1]));ctx.stroke();});
+  ctx.restore();
+  ctx.strokeStyle='#4b463f';ctx.lineWidth=1.5;ctx.stroke(stone);
+
+  // decorative carved border
+  const b=new Path2D();
+  b.moveTo(72,352);b.lineTo(66,152);b.bezierCurveTo(64,84,140,38,222,40);b.bezierCurveTo(310,40,372,84,368,158);b.lineTo(362,352);b.closePath();
+  carve(ctx,b,3,paint);
+
+  // rune text
+  const words=toRunes(text), maxW=250, areaH=250, cx=220, cy=196;
+  let h=62, lines;
+  for(;h>=20;h-=2){
+    const cw=h*.55, adv=h*.8, sp=h*.6;
+    const ww=w=>w.length*adv-(adv-cw);
+    if(words.some(w=>ww(w)>maxW)) continue;
+    lines=[];let cur=[],curW=0;
+    for(const w of words){
+      const add=ww(w)+(cur.length?sp:0);
+      if(cur.length&&curW+add>maxW){lines.push({w:cur,width:curW});cur=[w];curW=ww(w);}
+      else{cur.push(w);curW+=add;}
+    }
+    if(cur.length)lines.push({w:cur,width:curW});
+    if(lines.length*h*1.35-h*.35<=areaH) break;
+  }
+  if(words.length){
+    const cw=h*.55, adv=h*.8, sp=h*.6, path=new Path2D(), lh=h*1.35;
+    let y=cy-(lines.length*lh-h*.35)/2;
+    for(const L of lines){
+      let x=cx-L.width/2;
+      L.w.forEach((w,wi)=>{
+        w.forEach(r=>{addRune(path,r,x,y,cw,h);x+=adv;});
+        x-=(adv-cw);
+        if(wi<L.w.length-1){const dx=x+sp/2;path.moveTo(dx,y+h*.3);path.lineTo(dx,y+h*.3+.01);path.moveTo(dx,y+h*.7);path.lineTo(dx,y+h*.7+.01);x+=sp;}
+      });
+      y+=lh;
+    }
+    carve(ctx,path,Math.max(2.6,h*.1),paint);
+  }
+
+  // grass + caption
+  ctx.fillStyle='#233b1c';ctx.beginPath();ctx.moveTo(0,420);ctx.lineTo(0,372);
+  for(let x=0;x<=440;x+=8)ctx.lineTo(x+4,364+R()*14);
+  ctx.lineTo(440,420);ctx.fill();
+  g=ctx.createLinearGradient(0,380,0,420);g.addColorStop(0,'rgba(0,0,0,0)');g.addColorStop(1,'rgba(0,0,0,.45)');ctx.fillStyle=g;ctx.fillRect(0,380,440,40);
+  ctx.fillStyle='#f6e9c9';ctx.textAlign='center';let fs=16,cap=text?'“'+text+'”':'Type a message to carve it!';
+  ctx.font='italic '+fs+'px Georgia,serif';
+  while(ctx.measureText(cap).width>380&&fs>10){fs--;ctx.font='italic '+fs+'px Georgia,serif';}
+  ctx.fillText(cap,220,404);
+}
+
+// rune key
+function drawKey(){
+  const k=document.getElementById('key'),c=k.getContext('2d');
+  c.setTransform(2,0,0,2,0,0);
+  const cw=39,ch=59;
+  c.textAlign='center';c.font='11px Georgia,serif';c.fillStyle='#e8d9b5';
+  KEY.forEach(([r,l],i)=>{
+    if(!r)return;
+    const x=(i%8)*cw,y=Math.floor(i/8)*ch;
+    const p=new Path2D();addRune(p,r,x+cw/2-7,y+7,14,26);
+    c.strokeStyle='#e8b86a';c.lineWidth=2.2;c.lineCap='round';c.lineJoin='round';c.stroke(p);
+    c.fillText(l,x+cw/2,y+49);
+  });
+}
+
+document.getElementById('msg').addEventListener('input',render);
+document.getElementById('dl').addEventListener('click',()=>{
+  render();
+  cv.toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='my-runestone.png';document.body.appendChild(a);a.click();a.remove();},'image/png');
+});
+drawKey();render();
+</script>
+</body>
+</html>
